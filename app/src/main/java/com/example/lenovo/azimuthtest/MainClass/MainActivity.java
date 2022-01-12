@@ -7,7 +7,11 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.icu.text.SimpleDateFormat;
+import android.os.Build;
+import android.os.CountDownTimer;
 import android.os.Environment;
+import android.support.annotation.RequiresApi;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
@@ -15,7 +19,9 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.example.lenovo.azimuthtest.CollectTimeSet.CollectTime;
 import com.example.lenovo.azimuthtest.CollectTimeSet.FileName;
@@ -26,12 +32,15 @@ import com.example.lenovo.azimuthtest.StepDectClass.StepDectFsm;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.Calendar;
+import java.util.Date;
 
 public class MainActivity extends AppCompatActivity implements SensorEventListener{
     private static String TAG="AzimuthTest";
     private SensorManager sensorManager;
-    private Sensor accsensor,magsensor,gsensor,grsensor,presensor;
-    private TextView tv1,tv2,tv3,tv4,tv5,tv6;
+    private Sensor accsensor,magsensor,gsensor,grsensor,presensor,lightsensor,linaccsensor,unmagsensor;
+    private TextView tv1,tv2,tv3,tv4,tv5,tv6,tv7,tv8,tv9,tv10;
+    private EditText editText;
     private Button bt1,bt2;
     float[] Rorate=new float[9];
     float[] OriVal=new float[3];
@@ -39,6 +48,8 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     float[] magVal=new float[3];
     float[] gVal=new float[3];
     float[] grVal=new float[3];
+    float[] linaccVal=new float[3];
+    float lightRSS=0f;
     float pressure=0f;
     private float Epsilon=0.0009765625f;
     private float Threshold=0.5f-Epsilon;
@@ -56,13 +67,22 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     private float meanAzimuthInDegree = 0f;
     private String[] needed_permission;
     private boolean doWrite=false;
-    String fileName="magneticdata";
+    String fileName="imusensordata";
     String sdPath;
     private float stepLength=0f;
     float[] Euler=new float[3];
     private int update=0;
     boolean isGRa=false,isGYR=false,isMAg=false;
-    private int count=0;
+    private int count=1;
+    private int sampletime=0;
+    private TimeCount timecount;
+    Calendar calendar=Calendar.getInstance();
+    int year=calendar.get(Calendar.YEAR);
+    int month=calendar.get(Calendar.MONTH);
+    int day=calendar.get(Calendar.DAY_OF_MONTH);
+    int hour=calendar.get(Calendar.HOUR_OF_DAY);
+    int minute=calendar.get(Calendar.MINUTE);
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -70,13 +90,17 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         initView();
         requestApplicationPermission();
         fusingClass=new FusingClass();
+        fileName=fileName+"_"+year+"_"+month+"_"+day+"_"+hour+"_"+minute;
         //步态探测
         stepDectFsm=new StepDectFsm();
         bt1.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+                sampletime=Integer.valueOf(String.valueOf(editText.getText().toString()));
+                timecount=new TimeCount(sampletime*1000,1000);
+                timecount.start();
                 doWrite=true;
-                count=count+1;
+//                count=count+1;
                 fileName=fileName+"_"+count;
                 Log.d(TAG,"Start...");
             }
@@ -84,23 +108,33 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         bt2.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                doWrite=false;
-                fileName="Azimuthdata";
+//                doWrite=false;
+//                fileName="Azimuthdata";
+                fileName="imusensordata"+"_"+year+"_"+month+"_"+day+"_"+hour+"_"+minute;
+                count=count+1;
+                editText.setText(sampletime+"");
+
             }
         });
 
     }
 
     private void initView() {
-        tv1=(TextView)findViewById(R.id.text);
-        tv2=(TextView)findViewById(R.id.text1);
-        tv3=(TextView)findViewById(R.id.text2);
-        tv4=(TextView)findViewById(R.id.text3);
-        tv5=(TextView)findViewById(R.id.text4);
-        tv6=(TextView)findViewById(R.id.text5);
+        tv1=(TextView)findViewById(R.id.text1);
+        tv2=(TextView)findViewById(R.id.text2);
+        tv3=(TextView)findViewById(R.id.text3);
+        tv4=(TextView)findViewById(R.id.text4);
+        tv5=(TextView)findViewById(R.id.text5);
+        tv6=(TextView)findViewById(R.id.text6);
+        tv7= (TextView) findViewById(R.id.text7);
+        tv8= (TextView) findViewById(R.id.text8);
+        tv9= (TextView) findViewById(R.id.text9);
+        tv10= (TextView) findViewById(R.id.text10);
+        editText= (EditText) findViewById(R.id.edit_text);
         bt1=(Button)findViewById(R.id.button);
         bt2=(Button)findViewById(R.id.button1);
     }
+
     private void requestApplicationPermission() {
         needed_permission = new String[]{
                 Manifest.permission.CHANGE_NETWORK_STATE,
@@ -145,13 +179,19 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         gsensor=sensorManager.getDefaultSensor(Sensor.TYPE_GRAVITY);
         grsensor=sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
         presensor=sensorManager.getDefaultSensor(Sensor.TYPE_PRESSURE);
-        sensorManager.registerListener(this,accsensor,CollectTime.COLLECT_NORMAL);
-        sensorManager.registerListener(this,magsensor,CollectTime.COLLECT_NORMAL);
-        sensorManager.registerListener(this,gsensor,CollectTime.COLLECT_NORMAL);
-        sensorManager.registerListener(this,grsensor,CollectTime.COLLECT_NORMAL);
-        sensorManager.registerListener(this,presensor,CollectTime.COLLECT_NORMAL);
+        lightsensor=sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT);
+        linaccsensor=sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION);
+
+        sensorManager.registerListener(this,accsensor,CollectTime.COLLECT_NOR);
+        sensorManager.registerListener(this,magsensor,CollectTime.COLLECT_NOR);
+        sensorManager.registerListener(this,gsensor,CollectTime.COLLECT_NOR);
+        sensorManager.registerListener(this,grsensor,CollectTime.COLLECT_NOR);
+        sensorManager.registerListener(this,presensor,CollectTime.COLLECT_NOR);
+        sensorManager.registerListener(this,lightsensor,CollectTime.COLLECT_NOR);
+        sensorManager.registerListener(this,linaccsensor,CollectTime.COLLECT_NOR);
     }
 
+    @RequiresApi(api = Build.VERSION_CODES.N)
     @Override
     public void onSensorChanged(SensorEvent event) {
         String string="";
@@ -168,16 +208,15 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             case Sensor.TYPE_MAGNETIC_FIELD:
                 magVal=event.values.clone();
                 isMAg=true;
-                tv4.setText("磁力x方向："+magVal[0]);
-                tv5.setText("磁力y方向："+magVal[1]);
-                tv6.setText("磁力z方向："+magVal[2]);
+                tv3.setText("magx is："+magVal[0]);
+                tv4.setText("magy is："+magVal[1]);
+                tv5.setText("mayz is："+magVal[2]);
                 update++;
-                string=string+magVal[0]+" "+magVal[1]+" "+magVal[2]+" ";
                 break;
             case Sensor.TYPE_GRAVITY:
                 gVal=event.values.clone();
                 isGRa=true;
-                string=string+gVal[0]+" "+gVal[1]+" "+gVal[2]+" ";
+//                string=string+gVal[0]+" "+gVal[1]+" "+gVal[2]+" ";
 //                tv4.setText("重力加速度x方向："+gVal[0]);
 //                tv5.setText("重力加速度y方向："+gVal[1]);
 //                tv6.setText("重力加速度z方向："+gVal[2]);sb.append(magVal[0]).append(',').append(magVal[1]).append(',').append(magVal[2]).append(',');
@@ -187,28 +226,24 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 grVal=event.values.clone();
                 update++;
                 isGYR=true;
-                string=string+grVal[0]+" "+grVal[1]+" "+grVal[2]+" ";
                 break;
-//            case Sensor.TYPE_PRESSURE:
-//                pressure=event.values[0];
-//                Log.i("TAG-pressure: ",""+pressure);
+            case Sensor.TYPE_PRESSURE:
+                pressure=event.values[0];
+                Log.i("TAG-pressure: ",""+pressure);
+                break;
+            case Sensor.TYPE_LIGHT:
+                lightRSS=event.values[0];
+                Log.i("TAG-lightRSS: ",""+lightRSS);
+                break;
+            case Sensor.TYPE_LINEAR_ACCELERATION:
+                linaccVal=event.values.clone();
+                break;
             default:
                 break;
         }
-//        if (event.sensor.getType() == Sensor.TYPE_GRAVITY) {
-//            gVal = event.values.clone();
-//            isGRa=true;
-//        }
-//        if (event.sensor.getType() == Sensor.TYPE_GYROSCOPE) {
-//            grVal = event.values.clone();
-//            isGYR=true;
-//        }
-//        if (event.sensor.getType() == Sensor.TYPE_MAGNETIC_FIELD) {
-//            magVal = event.values.clone();
-//            isMAg=true;
-//        }
-        float Azimuth=0f,Poitch=0f,Roll=0f;
-        //调用方法
+
+        float Azimuth=0f,Pitch=0f,Roll=0f;
+        //调用MCF方法
 //        if(isGRa&&isGYR&&isMAg) {
 //            Quaternion = fusingClass.AHRSupdate(grVal[0], grVal[1], grVal[2], gVal[0], gVal[1], gVal[2], magVal[0], magVal[1], magVal[2]);
 //            QuaternionToEuler(Quaternion);
@@ -257,16 +292,22 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             isGRa=false;
             isGYR=false;
             isMAg=false;
+            String strings;
+            //写入内存
+            SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss.SSS");
+            strings=sdf.format(new Date());
+            string=strings+" "+accVal[0]+" "+accVal[1]+" "+accVal[2]+" "+magVal[0]+" "+magVal[1]+" "+magVal[2]+" "
+            +string+grVal[0]+" "+grVal[1]+" "+grVal[2]+" "+linaccVal[0]+" "+linaccVal[1]+" "+linaccVal[2]+" ";
             Azimuth= (float) Math.toDegrees(OriVal[0]);
-            Poitch=(float)Math.toDegrees(OriVal[1]);
+            Pitch=(float)Math.toDegrees(OriVal[1]);
             Roll= (float) Math.toDegrees(OriVal[2]);
             if(Math.toDegrees(OriVal[0])<0){
                 Azimuth=360+Azimuth;
-                tv3.setText("Azimuth is : "+Azimuth);
+                tv6.setText("Yaw is : "+Azimuth);
             }else{
-                tv3.setText("Azimuth is : "+Azimuth);
+                tv6.setText("Yaw is : "+Azimuth);
             }
-            Log.i(TAG," "+Roll);
+
 //            if(Math.toDegrees(Euler_degrees[0])<0){
 //                Azimuth=360+Azimuth;
 //                tv3.setText("Azimuth is : "+Azimuth);
@@ -278,12 +319,17 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 //            String message=null;
 //            //float Azimuth=getAzimuthInDegree(gVal,magVal);
 //            message=""+Azimuth+" "+stepLength+"\n";
-            string=string+Azimuth+" "+Poitch+" "+Roll+" "+stepLength+"\n";
+            string=string+Azimuth+" "+Pitch+" "+Roll+" "+stepLength+"\n";
             //把方位和步长数据写入
             if(doWrite){
                 WriteFileSdcard(string);
             }
-            tv3.setText("Azimuth is : "+Azimuth);
+            Log.i(TAG," "+string);
+            tv7.setText("Roll is : "+Roll);
+            tv8.setText("Pitch is : "+Pitch);
+            tv9.setText("LightRSS is: "+lightRSS);
+            tv10.setText("Pressure is: "+pressure);
+            string=null;
         }
 
     }
@@ -377,6 +423,32 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             fos.close();
         }catch (IOException e){
             e.printStackTrace();
+        }
+    }
+
+
+    //倒计时
+    private class TimeCount extends CountDownTimer {
+
+        /**
+         * @param millisInFuture    The number of millis in the future from the call
+         *                          to {@link #start()} until the countdown is done and {@link #onFinish()}
+         *                          is called.
+         * @param countDownInterval The interval along the way to receive
+         *                          {@link #onTick(long)} callbacks.
+         */
+        public TimeCount(long millisInFuture, long countDownInterval) {
+            super(millisInFuture, countDownInterval);
+        }
+
+        @Override
+        public void onTick(long millisUntilFinished) {
+            editText.setText(millisUntilFinished/1000+"");
+        }
+
+        @Override
+        public void onFinish() {
+            doWrite=false;
         }
     }
 }
